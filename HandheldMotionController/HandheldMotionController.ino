@@ -1,22 +1,21 @@
-// -------------------- TO DO LIST --------------------
-// 1. Add joystick function
-// 2. Add motion functions
-// 3. Figure out mutual exclusivity (what actions can be done while other actions are being done, ideally nothing is ex)
-// 3. ESP-NOW
-// 4. yippee yeah wahoo
+// ----------------------------------------------------------------------------------------------------------------------------
+//
+// The following is code for the handheld Arduino Nano ESP32 as a part of the Nintendo Switch Motion Controller.
+//
+// ----------------------------------------------------------------------------------------------------------------------------
 
+// includes necessary libraries
 #include <Arduino.h>
 #include <Adafruit_BNO08x.h>
 #include <esp_now.h>
 #include <WiFi.h>
 
-#define BOARD_ID 1 // 0 for left board, 1 for right board
-
+// sets up the BNO085
 #define BNO08X_RESET -1
-
 Adafruit_BNO08x bno08x(BNO08X_RESET);
 sh2_SensorValue_t sensorValue;
 
+// sets up the message structure for ESP-NOW transmission
 uint8_t receiverAddress[] = { 0x48, 0xCA, 0x43, 0x2E, 0xCA, 0xEC };
 typedef struct messageStruct {
   int8_t id;
@@ -27,10 +26,10 @@ typedef struct messageStruct {
   float analogX;
   float analogY;
 } messageStruct;
-
 messageStruct messageData;
 esp_now_peer_info_t peerInfo;
 
+// sets up the variables used in the rest of the program so that they can be referenced anywhere
 float jOffset;
 float iRot, jRot, kRot;
 float xAccel, yAccel, zAccel;
@@ -39,6 +38,7 @@ int8_t currentXPosition, currentYPosition, currentZPosition, currentTiltPosition
 float currentAnalogXPosition, currentAnalogYPosition;
 long timeSinceXMovement, timeSinceYMovement, timeSinceZMovement;
 int xMovementCount, yMovementCount, zMovementCount;
+#define BOARD_ID 0  // 0 for left board, 1 for right board
 #define NEUTRAL 0
 #define LEFT -1
 #define RIGHT 1
@@ -48,10 +48,10 @@ int xMovementCount, yMovementCount, zMovementCount;
 #define BACKWARD 1
 #define TILT_LEFT -1
 #define TILT_RIGHT 1
-
 #define ANALOG_DEADZONE 0.2
 
 void setup() {
+  //sets up all of the lights on the board
   pinMode(LED_RED, OUTPUT);
   pinMode(LED_GREEN, OUTPUT);
   pinMode(LED_BLUE, OUTPUT);
@@ -61,6 +61,7 @@ void setup() {
   digitalWrite(LED_BLUE, HIGH);
   digitalWrite(LED_BUILTIN, LOW);
 
+  // sets up ESP-NOW
   Serial.begin(115200);
   WiFi.mode(WIFI_STA);
   if (esp_now_init() != ESP_OK) {
@@ -68,7 +69,6 @@ void setup() {
     return;
   }
   esp_now_register_send_cb(esp_now_send_cb_t(onDataSent));
-
   memcpy(peerInfo.peer_addr, receiverAddress, 6);
   peerInfo.channel = 0;
   peerInfo.encrypt = false;
@@ -77,19 +77,14 @@ void setup() {
     return;
   }
 
+  // sets up the BNO085
   Serial.println("Adafruit BNO08x test!");
-
-  // Try to initialize!
   if (!bno08x.begin_I2C()) {
-    //if (!bno08x.begin_UART(&Serial1)) {  // Requires a device with > 300 byte UART buffer!
-    //if (!bno08x.begin_SPI(BNO08X_CS, BNO08X_INT)) {
     Serial.println("Failed to find BNO08x chip");
     while (1) { delay(10); }
   }
   Serial.println("BNO08x Found!");
-
   setReports();
-
   Serial.println("Reading events");
   delay(100);
 }
@@ -114,13 +109,11 @@ void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 void loop() {
   if (bno08x.wasReset()) {
+    // resets the BNO085 and calls the calibrate function to normalize the J value
     Serial.print("sensor was reset ");
     setReports();
     jOffset = 0;
     calibrateCycle = 0;
-    // digitalWrite(LED_GREEN,LOW);
-    // delay(1000);
-    // digitalWrite(LED_GREEN,HIGH);
     calibrate();
   }
   if (!bno08x.getSensorEvent(&sensorValue)) {
@@ -129,6 +122,7 @@ void loop() {
 
   if (calibrateCycle > 100) {
     switch (sensorValue.sensorId) {
+      // acceleration input code
       case SH2_LINEAR_ACCELERATION:
         xAccel = sensorValue.un.linearAcceleration.x;
         yAccel = sensorValue.un.linearAcceleration.y;
@@ -210,9 +204,9 @@ void loop() {
           zMovementCount = 0;
         }
 
-        
-
         break;
+
+      // analog and tilt rotation input code
       case SH2_GAME_ROTATION_VECTOR:
         iRot = sensorValue.un.gameRotationVector.i;
         jRot = sensorValue.un.gameRotationVector.j - jOffset;
@@ -250,13 +244,13 @@ void loop() {
           if (jRot > 0.4) {
             currentAnalogYPosition = -1;
           } else {
-            currentAnalogYPosition = -ANALOG_DEADZONE + (jRot - 0.15) * (ANALOG_DEADZONE - 1) / (0.4-0.15);
+            currentAnalogYPosition = -ANALOG_DEADZONE + (jRot - 0.15) * (ANALOG_DEADZONE - 1) / (0.4 - 0.15);
           }
         } else if (jRot < -0.1) {
           if (jRot < -0.17) {
             currentAnalogYPosition = 1;
           } else {
-            currentAnalogYPosition = ANALOG_DEADZONE + (jRot + 0.1) * (1 - ANALOG_DEADZONE) / (0.1-0.17);
+            currentAnalogYPosition = ANALOG_DEADZONE + (jRot + 0.1) * (1 - ANALOG_DEADZONE) / (0.1 - 0.17);
           }
         } else {
           currentAnalogYPosition = 0;
@@ -265,6 +259,7 @@ void loop() {
         break;
     }
 
+    // converts data to message structure and sends via ESP-NOW
     messageData.id = BOARD_ID;
     messageData.x = currentXPosition;
     messageData.y = currentYPosition;
@@ -272,9 +267,9 @@ void loop() {
     messageData.tilt = currentTiltPosition;
     messageData.analogX = currentAnalogXPosition;
     messageData.analogY = currentAnalogYPosition;
-
     esp_err_t result = esp_now_send(receiverAddress, (uint8_t *)&messageData, sizeof(messageData));
 
+    // warns if ESP-NOW isn't working
     if (result == ESP_OK) {
       digitalWrite(LED_RED, HIGH);
     } else {
@@ -282,6 +277,7 @@ void loop() {
     }
 
   } else {
+    // calibration cycles are used to get the average of the J value for normalization
     calibrate();
     if (calibrateCycle > 100) {
       jOffset /= calibrateCycle;
@@ -305,11 +301,9 @@ void calibrate() {
   switch (sensorValue.sensorId) {
     case SH2_GAME_ROTATION_VECTOR:
       digitalWrite(LED_BLUE, LOW);
-      //iOffset += sensorValue.un.gameRotationVector.i;
       jOffset += sensorValue.un.gameRotationVector.j;
-      //kOffset += sensorValue.un.gameRotationVector.k;
       break;
 
-      // current calibration only allows for play while controller is stricty vertical (intended use case), fix when rest is finished
+      // current calibration only allows for play while controller is stricty vertical (intended use case)
   }
 }
